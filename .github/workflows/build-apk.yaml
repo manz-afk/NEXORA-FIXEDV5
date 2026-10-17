@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -38,8 +38,8 @@ jobs:
           java -version
 
       # File di repo ter-upload "datar" (lib__core__api.dart, tools__build.sh, dst).
-      # Langkah ini mengembalikannya ke folder asli (lib/core/api.dart, tools/build.sh)
-      # di salinan CI saja. Tidak mengubah isi repo.
+      # Langkah ini mengembalikannya ke folder asli di salinan CI saja.
+      # File yang sudah ada di folder aslinya tidak ditimpa.
       - name: Pulihkan struktur folder
         run: |
           shopt -s nullglob
@@ -48,16 +48,32 @@ jobs:
             [ -f "$f" ] || continue
             dest="${f//__//}"
             mkdir -p "$(dirname "$dest")"
-            mv -f "$f" "$dest"
-            count=$((count + 1))
+            if [ -e "$dest" ]; then
+              echo "lewati (sudah ada): $dest"
+            else
+              mv "$f" "$dest"
+              count=$((count + 1))
+            fi
           done
           echo "Dipulihkan: $count file"
+
+          # Pastikan tools/build.sh versi lengkap (pakai flutter create).
+          if ! grep -q "flutter create" tools/build.sh 2>/dev/null; then
+            if [ -f tools__build.sh ]; then
+              mkdir -p tools
+              cp tools__build.sh tools/build.sh
+              echo "tools/build.sh diganti dengan tools__build.sh"
+            else
+              echo "::error::tools/build.sh versi lengkap tidak ditemukan"
+              exit 1
+            fi
+          fi
+
           test -f lib/main.dart || { echo "::error::lib/main.dart tidak ditemukan"; exit 1; }
-          test -f tools/build.sh || { echo "::error::tools/build.sh tidak ditemukan"; exit 1; }
+          test -f tools/patch_android.py || { echo "::error::tools/patch_android.py tidak ditemukan"; exit 1; }
           find lib tools -type f | sort
 
-      # assets/logo.png dipakai pubspec.yaml dan pembuat ikon launcher.
-      # Kalau belum ada di repo, dibuatkan logo placeholder supaya build tidak gagal.
+      # Kalau assets/logo.png belum ada di repo, dibuatkan placeholder.
       - name: Pastikan assets/logo.png ada
         run: |
           if [ -f assets/logo.png ]; then
@@ -139,6 +155,20 @@ jobs:
         run: |
           sed -i -E 's/^([[:space:]]*google_mlkit_text_recognition[[:space:]]*:[[:space:]]*)\^?0\.13\.[0-9]+/\1^0.14.0/' pubspec.yaml
           grep -n "google_mlkit\|sdk:" pubspec.yaml
+
+      # Plugin lama (mis. flutter_inappwebview_android) masih memakai
+      # proguard-android.txt yang ditolak Gradle baru. Ganti ke versi -optimize.
+      - name: Patch Gradle plugin (proguard)
+        run: |
+          flutter pub get
+          PUB="${PUB_CACHE:-$HOME/.pub-cache}"
+          grep -rlE --include='build.gradle' --include='build.gradle.kts' "proguard-android\.txt" "$PUB/hosted" 2>/dev/null | while read -r f; do
+            echo "patch: $f"
+            sed -i "s/proguard-android\.txt/proguard-android-optimize.txt/g" "$f"
+          done || true
+
+      - name: Terima lisensi Android SDK
+        run: yes | flutter doctor --android-licenses >/dev/null 2>&1 || true
 
       - name: Build APK
         run: bash tools/build.sh

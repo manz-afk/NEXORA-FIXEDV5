@@ -71,6 +71,24 @@ jobs:
             cp -r "$TMP/nx/android" android
           fi
 
+          # Izin INTERNET & CAMERA wajib ada di manifest utama. Build release tidak mewarisi izin dari debug/profile,
+          # jadi tanpa ini APK release tidak bisa mengakses internet.
+          if [ -f android/app/src/main/AndroidManifest.xml ]; then
+            python3 - <<'PYPERM'
+          import re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          for perm in ("INTERNET", "CAMERA"):
+              name = "android.permission." + perm
+              if name not in s:
+                  s = re.sub(r"(<manifest[^>]*>)",
+                             lambda m: m.group(1) + '\n    <uses-permission android:name="' + name + '" />',
+                             s, count=1)
+                  print("izin ditambahkan:", name)
+          open(p, "w", encoding="utf-8").write(s)
+          PYPERM
+          fi
+
           cat > "$RUNNER_TEMP/shrink_android.py" <<'PYEOF'
           # Mengecilkan APK TANPA mengubah isi/fitur aplikasi:
           #  1) hanya arsitektur arm64-v8a (library native arsitektur lain, termasuk milik plugin, tidak ikut)
@@ -114,6 +132,11 @@ jobs:
                   print("tidak ada perubahan di", f)
           PYEOF
           python3 "$RUNNER_TEMP/shrink_android.py" android
+
+          # Konflik versi di pubspec: google_mlkit_barcode_scanning ^0.13.0 butuh google_mlkit_commons ^0.9.0,
+          # sedangkan google_mlkit_text_recognition ^0.13.x butuh ^0.8.1. Naikkan text_recognition ke ^0.14.0 (saran dari pub).
+          sed -i -E "s/(google_mlkit_text_recognition:[[:space:]]*[\"']?)\^0\.13\.[0-9]+/\1^0.14.0/" pubspec.yaml
+          grep -n "google_mlkit" pubspec.yaml || true
 
           flutter pub get
 

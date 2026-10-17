@@ -1,0 +1,43 @@
+name: nexvora
+description: Nexvora Android App
+publish_to: "none"
+
+version: 1.7.0+17
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  webview_flutter: ^4.10.0
+  http: ^1.2.2
+  path_provider: ^2.1.4
+  gal: ^2.3.1
+  flutter_inappwebview: ^6.1.5
+  open_filex: ^4.5.0
+  file_picker: ^8.1.2
+  share_plus: ^10.0.2
+  url_launcher: ^6.3.0
+  shared_preferences: ^2.3.2
+  package_info_plus: ^8.0.2
+  permission_handler: ^11.3.1
+  local_auth: ^2.3.0
+  speech_to_text: ^7.0.0
+  flutter_tts: ^4.1.0
+  google_mlkit_text_recognition: ^0.13.0
+  google_mlkit_barcode_scanning: ^0.13.0
+  crypto: ^3.0.5
+  ffmpeg_kit_flutter_new: any
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.png

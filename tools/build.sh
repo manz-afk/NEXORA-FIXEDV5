@@ -52,6 +52,21 @@ build_apk() {
     grep -n "google_mlkit" "$APP_DIR/pubspec.yaml" || true
   fi
 
+  # Kompatibilitas AGP 9 untuk plugin lama (mis. flutter_inappwebview_android 1.1.3 yang masih
+  # memakai proguard-android.txt). Opt-out resmi dari AGP 9.0 = kembali ke perilaku AGP 8.
+  # HANYA di salinan untuk build, file repo tidak diubah.
+  {
+    echo ""
+    echo "# ditambahkan oleh tools/build.sh"
+    echo "android.r8.proguardAndroidTxt.disallowed=false"
+    echo "android.r8.globalOptionsInConsumerRules.disallowed=false"
+    echo "android.proguard.failOnMissingFiles=false"
+    echo "android.uniquePackageNames=false"
+    echo "android.sourceset.disallowProvider=false"
+    echo "android.r8.strictFullModeForKeepRules=false"
+    echo "android.r8.optimizedResourceShrinking=false"
+  } >> "$APP_DIR/android/gradle.properties" || return 1
+
   ( cd "$APP_DIR" && flutter pub get && flutter build apk "${flags[@]}" ) || return 1
 
   local apk="$APP_DIR/build/app/outputs/flutter-apk/app-release.apk"

@@ -157,15 +157,25 @@ jobs:
           grep -n "google_mlkit\|sdk:" pubspec.yaml
 
       # Plugin lama (mis. flutter_inappwebview_android) masih memakai
-      # proguard-android.txt yang ditolak Gradle baru. Ganti ke versi -optimize.
-      - name: Patch Gradle plugin (proguard)
+      # proguard-android.txt yang ditolak Gradle baru. Skrip patch dijalankan
+      # tepat sebelum "flutter build apk" di dalam tools/build.sh.
+      - name: Pasang patch Gradle plugin (proguard)
         run: |
-          flutter pub get
+          cat > tools/patch_gradle.sh <<'SH'
+          #!/usr/bin/env bash
           PUB="${PUB_CACHE:-$HOME/.pub-cache}"
+          echo "== patch proguard di $PUB =="
           grep -rlE --include='build.gradle' --include='build.gradle.kts' "proguard-android\.txt" "$PUB/hosted" 2>/dev/null | while read -r f; do
             echo "patch: $f"
             sed -i "s/proguard-android\.txt/proguard-android-optimize.txt/g" "$f"
           done || true
+          exit 0
+          SH
+          if ! grep -q "patch_gradle.sh" tools/build.sh; then
+            sed -i 's|^\([[:space:]]*\)flutter build apk|\1bash "${GITHUB_WORKSPACE}/tools/patch_gradle.sh"\n\1flutter build apk|' tools/build.sh
+          fi
+          grep -q "patch_gradle.sh" tools/build.sh || { echo "::error::gagal memasang patch di tools/build.sh"; exit 1; }
+          grep -n "patch_gradle\|flutter build apk" tools/build.sh
 
       - name: Terima lisensi Android SDK
         run: yes | flutter doctor --android-licenses >/dev/null 2>&1 || true

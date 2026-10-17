@@ -7,174 +7,24 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      # ZIP datar (semua file di satu level, nama pakai "__" sebagai pemisah folder)
-      # dikembalikan ke struktur folder. Dilewati kalau folder lib/ sudah ada.
-      - name: Pulihkan struktur folder (ZIP datar)
-        run: |
-          if [ -d lib ]; then
-            echo "Struktur folder sudah benar, dilewati."
-            exit 0
-          fi
-          shopt -s nullglob dotglob
-          for f in *__*; do
-            [ -f "$f" ] || continue
-            d="${f//__//}"
-            mkdir -p "$(dirname "$d")"
-            mv "$f" "$d"
-          done
-          echo "Struktur folder dipulihkan."
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # Dikunci ke 3.41.9: Flutter 3.44 ke atas membuat class IconData final, jadi
-      # font_awesome_flutter versi lama gagal compile (error "can't be extended").
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.9'
           channel: stable
           cache: true
 
-      # Menyiapkan android/ (kalau belum ada) dan mengecilkan APK tanpa mengubah fitur:
-      # hanya arm64-v8a, dan library native dikompres di dalam APK.
-      - name: Siapkan android dan pengecilan ukuran
-        run: |
-          set -euo pipefail
-
-          if [ ! -f pubspec.yaml ]; then
-            echo "::error::pubspec.yaml tidak ditemukan di root repo."
-            exit 1
-          fi
-
-          # Perbaiki error "Not found: package:home_widget" (paketnya tidak ada di pubspec tapi masih di-import)
-          if [ -f lib/core/widget_sync.dart ] && grep -q "package:home_widget" lib/core/widget_sync.dart \
-             && ! grep -q "home_widget:" pubspec.yaml; then
-            printf 'Future<void> syncWidget() async {}\n' > lib/core/widget_sync.dart
-            echo "widget_sync.dart diganti versi kosong (home_widget tidak ada di pubspec)."
-          fi
-
-          if [ -f android/app/src/main/AndroidManifest.xml ]; then
-            echo "android/ sudah ada, tidak dibuat ulang."
-          elif [ -f tools/make_android.sh ]; then
-            bash tools/make_android.sh
-          else
-            NAME=$(grep -m1 '^name:' pubspec.yaml | awk '{print $2}' | tr -d '\r')
-            TMP=$(mktemp -d)
-            flutter create --platforms android --project-name "${NAME:-app}" "$TMP/nx"
-            rm -rf android
-            cp -r "$TMP/nx/android" android
-          fi
-
-          # Izin INTERNET & CAMERA wajib ada di manifest utama. Build release tidak mewarisi izin dari debug/profile,
-          # jadi tanpa ini APK release tidak bisa mengakses internet.
-          if [ -f android/app/src/main/AndroidManifest.xml ]; then
-            python3 - <<'PYPERM'
-          import re
-          p = "android/app/src/main/AndroidManifest.xml"
-          s = open(p, encoding="utf-8").read()
-          for perm in ("INTERNET", "CAMERA"):
-              name = "android.permission." + perm
-              if name not in s:
-                  s = re.sub(r"(<manifest[^>]*>)",
-                             lambda m: m.group(1) + '\n    <uses-permission android:name="' + name + '" />',
-                             s, count=1)
-                  print("izin ditambahkan:", name)
-          open(p, "w", encoding="utf-8").write(s)
-          PYPERM
-          fi
-
-          cat > "$RUNNER_TEMP/shrink_android.py" <<'PYEOF'
-          # Mengecilkan APK TANPA mengubah isi/fitur aplikasi:
-          #  1) hanya arsitektur arm64-v8a (library native arsitektur lain, termasuk milik plugin, tidak ikut)
-          #  2) library native dikompres di dalam APK (useLegacyPackaging) -> APK jauh lebih kecil
-          # Pemakaian: python3 shrink_android.py <folder android> [--revert]
-          #   --revert mengembalikan build.gradle ke kondisi sebelum pengecilan (dipakai kalau build gagal)
-          import glob, os, re, shutil, sys
-
-          android = sys.argv[1]
-          revert = "--revert" in sys.argv[2:]
-          files = [f for f in glob.glob(os.path.join(android, "app", "build.gradle*"))
-                   if not f.endswith(".noshrink")]
-
-          if revert:
-              for f in files:
-                  bak = f + ".noshrink"
-                  if os.path.exists(bak):
-                      shutil.copyfile(bak, f)
-                      print("pengecilan ukuran dibatalkan di", f)
-              sys.exit(0)
-
-          for f in files:
-              s = open(f, encoding="utf-8").read()
-              orig = s
-              if "abiFilters" not in s:
-                  s = re.sub(r"(defaultConfig\s*\{)",
-                             lambda m: m.group(1) + '\n        ndk {\n            abiFilters.add("arm64-v8a")\n        }',
-                             s, count=1)
-              if "useLegacyPackaging" not in s:
-                  s = re.sub(r"^(android\s*\{)",
-                             lambda m: m.group(1) + "\n    packaging {\n        jniLibs {\n"
-                                                    "            useLegacyPackaging = true\n        }\n    }\n",
-                             s, count=1, flags=re.M)
-              if s != orig:
-                  bak = f + ".noshrink"
-                  if not os.path.exists(bak):
-                      open(bak, "w", encoding="utf-8").write(orig)
-                  open(f, "w", encoding="utf-8").write(s)
-                  print("pengecilan ukuran dipasang di", f)
-              else:
-                  print("tidak ada perubahan di", f)
-          PYEOF
-          python3 "$RUNNER_TEMP/shrink_android.py" android
-
-          # Konflik versi di pubspec: google_mlkit_barcode_scanning ^0.13.0 butuh google_mlkit_commons ^0.9.0,
-          # sedangkan google_mlkit_text_recognition ^0.13.x butuh ^0.8.1. Naikkan text_recognition ke ^0.14.0 (saran dari pub).
-          sed -i -E "s/(google_mlkit_text_recognition:[[:space:]]*[\"']?)\^0\.13\.[0-9]+/\1^0.14.0/" pubspec.yaml
-          grep -n "google_mlkit" pubspec.yaml || true
-
-          flutter pub get
-
-          # Plugin lama memakai proguard-android.txt yang ditolak AGP baru (langkah ini tidak boleh menghentikan build)
-          PUBC="${PUB_CACHE:-$HOME/.pub-cache}"
-          { grep -rl "proguard-android.txt" "$PUBC" --include=build.gradle --include=build.gradle.kts 2>/dev/null || true; } \
-            | xargs -r sed -i 's/proguard-android\.txt/proguard-android-optimize.txt/g' || true
+      - name: Ensure assets folder exists
+        run: mkdir -p assets
 
       - name: Build APK
-        run: |
-          set -euo pipefail
-          build() {
-            if [ -f tools/build.sh ]; then
-              bash tools/build.sh
-            else
-              flutter build apk --release --target-platform android-arm64 --split-debug-info=build/symbols
-            fi
-          }
-          if ! build; then
-            echo "::warning::Build gagal, mengulang tanpa pengecilan ukuran."
-            python3 "$RUNNER_TEMP/shrink_android.py" android --revert
-            build
-          fi
-
-      # Memastikan APK ada di dist/ (dipakai langkah upload). Kalau belum ada, ambil dari hasil build flutter.
-      - name: Pastikan APK ada di dist/
-        if: success()
-        run: |
-          mkdir -p dist
-          if ! ls dist/*.apk >/dev/null 2>&1; then
-            if ls build/app/outputs/flutter-apk/*.apk >/dev/null 2>&1; then
-              cp build/app/outputs/flutter-apk/*.apk dist/
-            else
-              echo "::error::APK tidak ditemukan di dist/ maupun build/app/outputs/flutter-apk/."
-              exit 1
-            fi
-          fi
-          ls -lh dist/*.apk
+        run: bash tools/build.sh
 
       - uses: actions/upload-artifact@v4
         with:

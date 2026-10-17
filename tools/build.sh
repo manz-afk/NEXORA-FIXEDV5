@@ -44,6 +44,12 @@ build_apk() {
   fi
   if [ -f "$ROOT/pubspec.yaml" ]; then
     cp "$ROOT/pubspec.yaml" "$APP_DIR/pubspec.yaml" || return 1
+    # Perbaikan konflik versi, HANYA di salinan untuk build (pubspec.yaml di repo tidak diubah):
+    # google_mlkit_text_recognition ^0.13.x butuh google_mlkit_commons ^0.8,
+    # sedangkan google_mlkit_barcode_scanning ^0.13.0 butuh ^0.9 -> naikkan ke ^0.14.0.
+    sed -i -E "s/^([[:space:]]*google_mlkit_text_recognition:[[:space:]]*[\"']?)\^?0\.13\.[0-9]+/\1^0.14.0/" \
+      "$APP_DIR/pubspec.yaml" || return 1
+    grep -n "google_mlkit" "$APP_DIR/pubspec.yaml" || true
   fi
 
   ( cd "$APP_DIR" && flutter pub get && flutter build apk "${flags[@]}" ) || return 1

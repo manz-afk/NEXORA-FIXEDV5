@@ -37,6 +37,46 @@ jobs:
           dart --version
           java -version
 
+      # File di repo ter-upload "datar" (lib__core__api.dart, tools__build.sh, dst).
+      # Langkah ini mengembalikannya ke folder asli (lib/core/api.dart, tools/build.sh)
+      # di salinan CI saja. Tidak mengubah isi repo.
+      - name: Pulihkan struktur folder
+        run: |
+          shopt -s nullglob
+          count=0
+          for f in *__*; do
+            [ -f "$f" ] || continue
+            dest="${f//__//}"
+            mkdir -p "$(dirname "$dest")"
+            mv -f "$f" "$dest"
+            count=$((count + 1))
+          done
+          echo "Dipulihkan: $count file"
+          test -f lib/main.dart || { echo "::error::lib/main.dart tidak ditemukan"; exit 1; }
+          test -f tools/build.sh || { echo "::error::tools/build.sh tidak ditemukan"; exit 1; }
+          find lib tools -type f | sort
+
+      # assets/logo.png dipakai pubspec.yaml dan pembuat ikon launcher.
+      # Kalau belum ada di repo, dibuatkan logo placeholder supaya build tidak gagal.
+      - name: Pastikan assets/logo.png ada
+        run: |
+          if [ -f assets/logo.png ]; then
+            echo "assets/logo.png sudah ada"
+          else
+            echo "::warning::assets/logo.png tidak ada di repo, memakai placeholder. Upload logo asli ke assets/logo.png."
+            mkdir -p assets
+            pip install pillow --break-system-packages >/dev/null 2>&1 || pip install pillow >/dev/null 2>&1
+            python3 - <<'PY'
+          from PIL import Image, ImageDraw
+
+          img = Image.new("RGBA", (512, 512), (24, 24, 40, 255))
+          d = ImageDraw.Draw(img)
+          d.ellipse((96, 96, 416, 416), fill=(94, 129, 244, 255))
+          d.polygon([(190, 330), (190, 182), (322, 330), (322, 182)], outline=(255, 255, 255, 255), width=22)
+          img.save("assets/logo.png")
+          PY
+          fi
+
       # Naikkan batas SDK pubspec ke ^3.10.0 (dot-shorthands) di salinan CI.
       - name: Aktifkan dot-shorthands (SDK constraint pubspec >= 3.10)
         run: |
@@ -90,26 +130,15 @@ jobs:
               print(f"::warning::Dart terpasang {installed} (< 3.10), pubspec tidak diubah.")
               raise SystemExit(0)
 
-          tracked = subprocess.run(
-              ["git", "ls-files", "-z", "--", "*pubspec.yaml"],
-              capture_output=True,
-              check=True,
-          ).stdout.decode("utf-8")
-          pubspecs = [Path(f) for f in tracked.split("\0") if f and Path(f).name == "pubspec.yaml"]
-          if not pubspecs:
-              print("::warning::Tidak ada pubspec.yaml di repo, tidak ada yang diubah.")
-          for path in pubspecs:
+          for path in [Path("pubspec.yaml")]:
               print(f"{path}: {bump(path)}")
           PY
-          git --no-pager diff -- '*pubspec.yaml'
 
-      # Konflik dependency: text_recognition ^0.13.x butuh google_mlkit_commons ^0.8.1,
-      # sedangkan barcode_scanning ^0.13.0 butuh ^0.9.0. Naikkan text_recognition ke ^0.14.0.
-      # Solusi permanen: ubah di pubspec.yaml lalu hapus langkah ini.
+      # Konflik dependency ML Kit: text_recognition ^0.13.x vs barcode_scanning ^0.13.0.
       - name: Perbaiki konflik google_mlkit_text_recognition
         run: |
           sed -i -E 's/^([[:space:]]*google_mlkit_text_recognition[[:space:]]*:[[:space:]]*)\^?0\.13\.[0-9]+/\1^0.14.0/' pubspec.yaml
-          git --no-pager diff -- pubspec.yaml || true
+          grep -n "google_mlkit\|sdk:" pubspec.yaml
 
       - name: Build APK
         run: bash tools/build.sh

@@ -104,7 +104,22 @@ ensure_android_scaffold() {
   fi
   if [[ -n "${APP_ORG:-}" ]]; then org_args=(--org "$APP_ORG"); fi
   warn "android/ tidak ada: flutter create --platforms=android (nama=${APP_NAME}). applicationId mengikuti default Flutter kecuali APP_ORG diisi."
+  # Simpan lib/ dan pubspec.yaml: flutter create tidak boleh mengubah kode milik repo.
+  local snap
+  snap="$(mktemp -d "${TMPDIR:-/tmp}/nexvora-snap.XXXXXX")"
+  cp -a pubspec.yaml "$snap/pubspec.yaml"
+  cp -a lib "$snap/lib"
   flutter create --platforms=android ${org_args[@]+"${org_args[@]}"} --project-name "$APP_NAME" .
+  if ! diff -rq lib "$snap/lib" > /dev/null 2>&1; then
+    warn "flutter create mengubah lib/: dikembalikan ke isi repo"
+    rm -rf lib
+    cp -a "$snap/lib" lib
+  fi
+  if ! cmp -s pubspec.yaml "$snap/pubspec.yaml"; then
+    warn "flutter create mengubah pubspec.yaml: dikembalikan ke isi repo"
+    cp -a "$snap/pubspec.yaml" pubspec.yaml
+  fi
+  rm -rf "$snap"
 }
 log "5/9 Scaffold Android"
 ensure_android_scaffold
@@ -112,12 +127,28 @@ ensure_android_scaffold
 # -----------------------------------------------------------------------------
 # 6. Patch Android milik repo (bila ada)
 # -----------------------------------------------------------------------------
+# patch_android.py membaca folder android dari sys.argv[1]
+# (bukti: "android = sys.argv[1]" -> IndexError di log CI saat dipanggil tanpa argumen).
+# Ganti argumen lewat env PATCH_ANDROID_ARGS bila skripnya ternyata butuh yang lain.
+run_patch_android() {
+  local script="tools/patch_android.py"
+  local patch_args=()
+  if [[ ! -f "$script" ]]; then
+    warn "${script} tidak ada: langkah patch dilewati"
+    return 0
+  fi
+  read -r -a patch_args <<< "${PATCH_ANDROID_ARGS:-android}"
+  echo "python3 ${script} ${patch_args[*]}"
+  if ! python3 "$script" "${patch_args[@]}"; then
+    echo "---- diagnosis: argumen yang dibaca ${script} ----" >&2
+    grep -n 'sys\.argv' "$script" >&2 || true
+    echo "---- 25 baris pertama ${script} ----" >&2
+    sed -n '1,25p' "$script" >&2
+    die "${script} gagal. Kirim blok diagnosis di atas agar argumen yang benar bisa dipastikan."
+  fi
+}
 log "6/9 Patch Android"
-if [[ -f tools/patch_android.py ]]; then
-  python3 tools/patch_android.py
-else
-  warn "tools/patch_android.py tidak ada: langkah patch dilewati"
-fi
+run_patch_android
 
 # -----------------------------------------------------------------------------
 # 7. Dependensi
